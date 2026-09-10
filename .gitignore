@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+*.tmp
+web_fix_preview.png

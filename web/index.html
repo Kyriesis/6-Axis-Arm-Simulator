@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>虚拟六轴机械臂 - 网页控制</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft YaHei", sans-serif; background: #1e2126; color: #ddd; }
+  #app { display: flex; height: 100vh; }
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #view { flex: 1; position: relative; min-height: 0; }
+  #view canvas { display: block; }
+  #wfbox { height: 200px; background: #101317; border-top: 1px solid #3a3f47;
+           position: relative; }
+  #scope { display: block; width: 100%; height: 100%; }
+  #panel { width: 440px; min-width: 440px; overflow-y: auto; background: #262a31;
+           padding: 12px 14px; border-left: 1px solid #3a3f47; }
+  h1 { font-size: 17px; margin-bottom: 8px; color: #fff; }
+  h2 { font-size: 14px; margin: 14px 0 8px; color: #7ec8ff;
+       border-bottom: 1px solid #3a3f47; padding-bottom: 4px; }
+  .row { display: flex; align-items: center; margin: 4px 0; gap: 6px; }
+  .axis-name { width: 26px; font-size: 13px; color: #9fd; }
+  .jog-btn { width: 30px; height: 26px; background: #3a3f47; color: #ddd;
+             border: 1px solid #4a5058; border-radius: 4px; cursor: pointer;
+             font-size: 14px; user-select: none; }
+  .jog-btn:hover { background: #4a5568; }
+  .jog-btn:active { background: #5a6a80; }
+  input[type=range] { flex: 1; height: 22px; }
+  .angle { width: 74px; text-align: right; font-family: Consolas, monospace;
+           font-size: 12px; color: #ffd479; }
+  button.action { background: #2f6db3; color: #fff; border: none; border-radius: 4px;
+                  padding: 7px 12px; cursor: pointer; font-size: 13px; margin: 3px 4px 3px 0; }
+  button.action:hover { background: #3a80cc; }
+  button.warn { background: #b36a2f; }
+  button.warn:hover { background: #cc7d3a; }
+  button.warn.on { background: #2fa04d; }
+  button.warn.on:hover { background: #3abf60; }
+  button.estop { background: #c22; color: #fff; font-weight: bold;
+                 border: 2px solid #f66; border-radius: 6px;
+                 padding: 8px 18px; cursor: pointer; font-size: 15px; }
+  button.estop:hover { background: #e33; }
+  .num { width: 60px; background: #1b1e23; color: #ffd479; border: 1px solid #3a3f47;
+         border-radius: 3px; padding: 4px 5px; font-size: 12px;
+         font-family: Consolas, monospace; }
+  label.lbl { font-size: 12px; color: #aaa; width: 22px; }
+  #pose { font-family: Consolas, monospace; font-size: 12px; color: #9fd;
+          background: #1b1e23; border: 1px solid #3a3f47; border-radius: 4px;
+          padding: 8px; margin-top: 6px; line-height: 1.7; white-space: pre; }
+  #statusbar { display: flex; align-items: center; gap: 10px; margin-top: 8px;
+               background: #1b1e23; border: 1px solid #3a3f47; border-radius: 4px;
+               padding: 6px 8px; }
+  #mode { font-size: 12px; color: #7ec8ff; white-space: nowrap; }
+  #status { font-size: 12px; color: #ffb0b0; flex: 1; min-height: 16px; }
+  select { background: #1b1e23; color: #ddd; border: 1px solid #3a3f47;
+           border-radius: 3px; padding: 4px; font-size: 12px; }
+  #progress { font-size: 12px; color: #7ec8ff; margin-top: 4px; min-height: 15px; }
+  .chk { font-size: 12px; color: #aaa; display: flex; align-items: center; gap: 4px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="main">
+    <div id="view"></div>
+    <div id="wfbox"><canvas id="scope"></canvas></div>
+  </div>
+  <div id="panel">
+    <h1>虚拟六轴机械臂控制（Dummy-Robot 参数）</h1>
+
+    <h2>关节控制（滑块 / 点动）</h2>
+    <div id="sliders"></div>
+    <div class="row" style="margin-top:4px;">
+      <button class="action" id="btn-home">回零位</button>
+      <span style="font-size:12px;color:#888;">点动步进 0.5°，按住连续</span>
+    </div>
+
+    <h2>运行控制</h2>
+    <div class="row">
+      <button class="action warn" id="btn-random">随机点动：关</button>
+      <button class="estop" id="btn-stop">■ 停止 / 急停</button>
+    </div>
+    <div class="row">
+      <span style="font-size:12px;color:#aaa;">速度倍率</span>
+      <input type="range" id="speed" min="10" max="100" step="10" value="100"
+             style="flex:1;">
+      <span class="angle" id="speed-val">100%</span>
+    </div>
+    <div class="row">
+      <label class="chk"><input type="checkbox" id="chk-trail" checked> 末端轨迹拖尾</label>
+    </div>
+
+    <h2>末端位姿（FK 实时）</h2>
+    <div id="pose">加载中…</div>
+
+    <h2>IK 模式（目标位姿求解并执行）</h2>
+    <div class="row">
+      <label class="lbl">X</label><input class="num" id="ik-x" value="0.20">
+      <label class="lbl">Y</label><input class="num" id="ik-y" value="0.00">
+      <label class="lbl">Z</label><input class="num" id="ik-z" value="0.15">
+    </div>
+    <div class="row">
+      <label class="lbl">R</label><input class="num" id="ik-r" value="180">
+      <label class="lbl">P</label><input class="num" id="ik-p" value="0">
+      <label class="lbl">Y</label><input class="num" id="ik-yaw" value="0">
+      <span style="font-size:11px;color:#888;">姿态(度)可留空</span>
+    </div>
+    <button class="action" id="btn-ik">求解并执行</button>
+
+    <h2>轨迹执行</h2>
+    <div class="row" style="flex-wrap:wrap;">
+      <span style="font-size:12px;color:#aaa;">目标:</span>
+      <input class="num" id="tg-0" value="30"><input class="num" id="tg-1" value="-20">
+      <input class="num" id="tg-2" value="100"><input class="num" id="tg-3" value="40">
+      <input class="num" id="tg-4" value="50"><input class="num" id="tg-5" value="90">
+      <span style="font-size:11px;color:#888;">6 轴目标角(度)</span>
+    </div>
+    <div class="row">
+      <button class="action" id="btn-trap">点到点（梯形）</button>
+      <button class="action" id="btn-scurve">点到点（S 曲线）</button>
+    </div>
+    <div class="row">
+      <button class="action warn" id="btn-circle">圆形末端轨迹演示</button>
+      <select id="circle-plane">
+        <option value="xy">水平圆</option>
+        <option value="xz">竖直圆</option>
+      </select>
+    </div>
+    <div id="progress"></div>
+    <div id="statusbar">
+      <span id="mode">模式：手动</span>
+      <span id="status"></span>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------------- 全局状态 ----------------
+let limits = null;
+let currentQ = [0, 0, 90, 0, 0, 0];
+let playbackTimer = null;
+let playToken = 0;          // 回放代际：停止时自增，旧定时器失效
+let holdTimer = null;       // 随机点动的到位停留定时器
+let randomOn = false;
+let playbackSpeed = 1.0;
+let trailOn = true;
+
+const $ = (id) => document.getElementById(id);
+const status = (msg) => { $('status').textContent = msg; };
+function setMode(m) { $('mode').textContent = '模式：' + m; }
+
+async function api(path, opts) {
+  let r;
+  try {
+    r = await fetch(path, opts);
+  } catch (e) {
+    throw new Error('无法连接服务器，请确认 web_server.py 已启动');
+  }
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+// ---------------- three.js 场景 ----------------
+// 底座高度：J1 原点位于底座上表面中心（机械臂整体在场景中被抬高 BASE_H）
+const BASE_H = 0.05;
+const view = $('view');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1d22);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 20);
+camera.position.set(0.55, 0.4, 0.45);   // three.js 为 y-up：(x, 高度, 纵深)
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+view.appendChild(renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0.1, 0.12 + BASE_H, 0);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const dl = new THREE.DirectionalLight(0xffffff, 1.0);
+dl.position.set(1, 1, 2);
+scene.add(dl);
+const grid = new THREE.GridHelper(1.2, 24, 0x445, 0x334);
+scene.add(grid);
+// 底座：上表面中心为 J1 原点
+const baseMesh = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.05, 0.065, BASE_H, 32),
+  new THREE.MeshStandardMaterial({ color: 0x555c66 }));
+baseMesh.position.set(0, BASE_H / 2, 0);
+scene.add(baseMesh);
+
+// 连杆（圆柱）+ 关节（球）+ 末端坐标架
+const LINK_COLORS = [0x4d94ff, 0x66b3ff, 0x80ccff, 0xffa64d, 0xffbf80, 0xffd9b3];
+const links = [], joints = [];
+for (let i = 0; i < 6; i++) {
+  const m = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.012, 0.012, 1, 12),
+    new THREE.MeshStandardMaterial({ color: LINK_COLORS[i] }));
+  scene.add(m); links.push(m);
+  const s = new THREE.Mesh(
+    new THREE.SphereGeometry(0.016, 16, 12),
+    new THREE.MeshStandardMaterial({ color: 0xdddddd }));
+  scene.add(s); joints.push(s);
+}
+const eeAxes = new THREE.AxesHelper(0.06);
+scene.add(eeAxes);
+
+// ---------------- 末端轨迹拖尾 ----------------
+const TRAIL_MAX = 800;
+const trailPts = [];
+const trailGeom = new THREE.BufferGeometry();
+const trailLine = new THREE.Line(trailGeom, new THREE.LineBasicMaterial({
+  vertexColors: true, transparent: true, opacity: 0.95 }));
+trailLine.frustumCulled = false;
+scene.add(trailLine);
+
+function rebuildTrail() {
+  const n = trailPts.length;
+  if (n < 2) {
+    trailGeom.setAttribute('position',
+      new THREE.BufferAttribute(new Float32Array(0), 3));
+    return;
+  }
+  const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    pos[i * 3] = trailPts[i].x; pos[i * 3 + 1] = trailPts[i].y;
+    pos[i * 3 + 2] = trailPts[i].z;
+    const b = 0.15 + 0.85 * (i / n);   // 由暗到亮，末端最新
+    col[i * 3] = b; col[i * 3 + 1] = 0.35 * b; col[i * 3 + 2] = 0.3 * b;
+  }
+  trailGeom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  trailGeom.setAttribute('color', new THREE.BufferAttribute(col, 3));
+}
+function pushTrail(p) {
+  if (!trailOn) return;
+  const v = toScene(p);
+  const last = trailPts[trailPts.length - 1];
+  if (last && last.distanceToSquared(v) < 1e-6) return;
+  trailPts.push(v);
+  if (trailPts.length > TRAIL_MAX) trailPts.shift();
+  rebuildTrail();
+}
+function clearTrail() { trailPts.length = 0; rebuildTrail(); }
+
+// ---------------- 步进电机脉冲曲线 ----------------
+// 把每个轴的角度变化换算成脉冲计数（100 脉冲/°，与 simulation.py 一致），
+// 显示形式与 simulation.py 的 snapshot.png 一致：每路一台"虚拟电机"的
+// 累计脉冲计数曲线，各通道独立归一化，滚动时间窗。
+const PULSES_PER_DEG = 100;
+const SCOPE_WIN = 6.0;                 // 时间窗口（秒）
+const SCOPE_COLORS = ['#4d94ff', '#66b3ff', '#80ccff', '#ffa64d', '#ffbf80', '#ffd9b3'];
+const scope = document.getElementById('scope');
+const sctx = scope.getContext('2d');
+const scopeTimes = [];                 // 采样时刻
+const scopeCum = [];                   // 每轴累计脉冲（带符号浮点）
+let scopeRef = null;                   // 采样基准角度
+let scopeLastSample = 0;
+
+function scopeSample() {
+  const now = performance.now() / 1000;
+  if (scopeRef === null) {
+    scopeRef = currentQ.slice();
+    scopeTimes.push(now);
+    scopeCum.push([0, 0, 0, 0, 0, 0]);
+    scopeLastSample = now;
+    return;
+  }
+  if (now - scopeLastSample < 0.02) return;    // 50 Hz 采样
+  const prev = scopeCum[scopeCum.length - 1];
+  const c = new Array(6);
+  for (let i = 0; i < 6; i++)
+    c[i] = prev[i] + (currentQ[i] - scopeRef[i]) * PULSES_PER_DEG;
+  scopeTimes.push(now);
+  scopeCum.push(c);
+  scopeLastSample = now;
+  while (scopeTimes.length > 2 && scopeTimes[0] < now - SCOPE_WIN - 1) {
+    scopeTimes.shift();
+    scopeCum.shift();
+  }
+}
+
+// 在时刻 t 线性插值第 i 轴的累计脉冲
+function scopeInterp(t, i) {
+  const n = scopeTimes.length;
+  if (n === 0) return 0;
+  if (t <= scopeTimes[0]) return scopeCum[0][i];
+  if (t >= scopeTimes[n - 1]) return scopeCum[n - 1][i];
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (scopeTimes[mid] <= t) lo = mid; else hi = mid;
+  }
+  const f = (t - scopeTimes[lo]) / (scopeTimes[hi] - scopeTimes[lo]);
+  return scopeCum[lo][i] + (scopeCum[hi][i] - scopeCum[lo][i]) * f;
+}
+
+function scopeDraw() {
+  const dpr = window.devicePixelRatio || 1;
+  const W = scope.clientWidth, H = scope.clientHeight;
+  if (W === 0 || H === 0) return;
+  if (scope.width !== Math.round(W * dpr)) {
+    scope.width = Math.round(W * dpr);
+    scope.height = Math.round(H * dpr);
+  }
+  sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  sctx.clearRect(0, 0, W, H);
+  const now = performance.now() / 1000;
+  const t0 = now - SCOPE_WIN;
+  const cellW = W / 6;
+  const titleH = 16, axisH = 14;         // 顶部标题 / 底部时间轴
+  sctx.font = '10px Consolas, monospace';
+
+  for (let i = 0; i < 6; i++) {
+    const x0 = i * cellW;
+    const padX = 6;
+    const yTop = titleH, yBot = H - axisH;
+
+    // 格子边框 + 标题
+    sctx.strokeStyle = '#3a3f47';
+    sctx.lineWidth = 1;
+    sctx.strokeRect(x0 + 0.5, 0.5, cellW - 1, H - 1);
+    sctx.fillStyle = '#7ec8ff';
+    sctx.fillText('J' + (i + 1) + ' 电机脉冲', x0 + 6, 11);
+
+    // 时间刻度（1 秒一格，仅竖线，数字画在底部）
+    for (let ts = Math.ceil(t0); ts <= now; ts++) {
+      const x = x0 + padX + (ts - t0) / SCOPE_WIN * (cellW - padX * 2);
+      sctx.strokeStyle = '#20242a';
+      sctx.beginPath(); sctx.moveTo(x, yTop); sctx.lineTo(x, yBot); sctx.stroke();
+      sctx.fillStyle = '#4a5560';
+      sctx.fillText(ts.toFixed(0) + 's', x + 1, H - 3);
+    }
+
+    // 采样整窗的脉冲计数，求 min/max 做格内归一化
+    const nPx = Math.max(2, Math.round(cellW) - padX * 2);
+    const vals = new Float64Array(nPx + 1);
+    let vmin = Infinity, vmax = -Infinity;
+    for (let px = 0; px <= nPx; px++) {
+      const v = scopeInterp(t0 + px / nPx * SCOPE_WIN, i);
+      vals[px] = v;
+      if (v < vmin) vmin = v;
+      if (v > vmax) vmax = v;
+    }
+    const span = vmax - vmin;
+    const padY = (yBot - yTop) * 0.15;
+    const yOf = (v) => span > 1e-9
+      ? yBot - padY - (v - vmin) / span * (yBot - yTop - padY * 2)
+      : (yTop + yBot) / 2;               // 静止时画在格中部
+
+    // 曲线
+    sctx.strokeStyle = SCOPE_COLORS[i];
+    sctx.lineWidth = 1.4;
+    sctx.beginPath();
+    for (let px = 0; px <= nPx; px++) {
+      const x = x0 + padX + px / nPx * (cellW - padX * 2);
+      const y = yOf(vals[px]);
+      if (px === 0) sctx.moveTo(x, y); else sctx.lineTo(x, y);
+    }
+    sctx.stroke();
+
+    // 当前脉冲计数（右上角）
+    sctx.fillStyle = '#8899aa';
+    const cnt = vals[nPx].toFixed(0);
+    sctx.fillText(cnt, x0 + cellW - sctx.measureText(cnt).width - 6, 11);
+  }
+
+  // 图例
+  sctx.fillStyle = '#556';
+  sctx.fillText('电机脉冲计数（虚拟细分 ' + PULSES_PER_DEG + ' 脉冲/°）', 6, H - 3);
+}
+
+// 模型坐标 (x, y, z)（z 朝上）→ three.js 场景坐标（y 朝上）：(x, y, z) -> (x, z, -y)
+const M = new THREE.Matrix4().set(
+  1, 0, 0, 0,
+  0, 0, 1, 0,
+  0, -1, 0, 0,
+  0, 0, 0, 1);
+const toScene = (p) => new THREE.Vector3(p[0], p[2] + BASE_H, -p[1]);
+
+function placeLink(mesh, a, b) {
+  const va = toScene(a), vb = toScene(b);
+  const dir = new THREE.Vector3().subVectors(vb, va);
+  const len = dir.length();
+  mesh.scale.set(1, len, 1);
+  mesh.position.copy(va).addScaledVector(dir, 0.5);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+}
+
+function updateArm(jointsPos, rpyDeg) {
+  for (let i = 0; i < 6; i++) {
+    placeLink(links[i], jointsPos[i], jointsPos[i + 1]);
+    joints[i].position.copy(toScene(jointsPos[i + 1]));
+  }
+  joints[0].position.copy(toScene(jointsPos[0]));
+  eeAxes.position.copy(toScene(jointsPos[6]));
+  if (rpyDeg) {
+    // 模型系 ZYX 欧拉角（R = Rz(yaw)Ry(pitch)Rx(roll)）→ 场景系：R' = M·R·Mᵀ
+    const [r, p, y] = rpyDeg.map((v) => v * Math.PI / 180);
+    const R = new THREE.Matrix4().makeRotationFromEuler(
+      new THREE.Euler(r, p, y, 'ZYX'));
+    R.premultiply(M).multiply(M.clone().transpose());
+    eeAxes.quaternion.setFromRotationMatrix(R);
+  }
+  pushTrail(jointsPos[6]);
+}
+
+function resize() {
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+
+(function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+  scopeSample();
+  scopeDraw();
+})();
+
+// ---------------- 滑块与点动 ----------------
+function buildSliders() {
+  const box = $('sliders');
+  box.innerHTML = '';
+  for (let i = 0; i < 6; i++) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML =
+      `<span class="axis-name">J${i + 1}</span>` +
+      `<button class="jog-btn" data-i="${i}" data-d="-1">−</button>` +
+      `<input type="range" id="sl-${i}" min="${limits[i][0]}" max="${limits[i][1]}" ` +
+      `step="0.5" value="${currentQ[i]}">` +
+      `<button class="jog-btn" data-i="${i}" data-d="1">+</button>` +
+      `<span class="angle" id="ang-${i}">${currentQ[i].toFixed(1)}°</span>`;
+    box.appendChild(row);
+  }
+  for (let i = 0; i < 6; i++) {
+    $('sl-' + i).addEventListener('input', (e) => {
+      enterManual();
+      currentQ[i] = parseFloat(e.target.value);
+      refreshFK();
+    });
+  }
+  document.querySelectorAll('.jog-btn').forEach((btn) => {
+    const i = parseInt(btn.dataset.i), d = parseInt(btn.dataset.d);
+    let t = null;
+    const step = () => {
+      enterManual();
+      currentQ[i] = Math.min(limits[i][1], Math.max(limits[i][0], currentQ[i] + 0.5 * d));
+      $('sl-' + i).value = currentQ[i];
+      refreshFK();
+    };
+    btn.addEventListener('pointerdown', () => { step(); t = setInterval(step, 90); });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(
+      (ev) => btn.addEventListener(ev, () => { clearInterval(t); t = null; }));
+  });
+}
+
+function syncSliders() {
+  for (let i = 0; i < 6; i++) {
+    $('sl-' + i).value = currentQ[i];
+    $('ang-' + i).textContent = currentQ[i].toFixed(1) + '°';
+  }
+}
+
+// ---------------- 进入手动模式（停随机/停回放） ----------------
+function enterManual() {
+  if (randomOn) { randomOn = false; updateRandomBtn(); }
+  if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+  stopPlayback();
+  setMode('手动');
+}
+
+// ---------------- FK 刷新（序号防竞态：只应用最新请求的结果） ----------------
+let fkSeq = 0;
+async function refreshFK() {
+  const seq = ++fkSeq;
+  const qReq = currentQ.slice();
+  try {
+    const j = await api('/api/fk?j=' + qReq.map((v) => v.toFixed(2)).join(','));
+    if (seq !== fkSeq) return;   // 已有更新的请求发出，丢弃过期响应
+    currentQ = j.q;
+    updateArm(j.joints, j.pose.rpy_deg);
+    syncSliders();
+    const p = j.pose.position, r = j.pose.rpy_deg;
+    $('pose').textContent =
+      `位置  X ${p[0].toFixed(4)}  Y ${p[1].toFixed(4)}  Z ${p[2].toFixed(4)} m\n` +
+      `姿态  R ${r[0].toFixed(1)}  P ${r[1].toFixed(1)}  Y ${r[2].toFixed(1)} deg`;
+    status('');
+  } catch (e) { status(e.message); }
+}
+
+// ---------------- 轨迹回放（Promise 化，支持速度倍率与随时中断） ----------------
+function stopPlayback() {
+  playToken++;
+  if (playbackTimer) { clearInterval(playbackTimer); playbackTimer = null; }
+}
+
+/** 播放轨迹，返回 Promise: 'done'=播完, 'stopped'=被中断 */
+function playTrajectoryAsync(payload, label) {
+  return new Promise((resolve) => {
+    stopPlayback();
+    const token = playToken;   // stopPlayback 已自增，作为本次播放的代际号
+    clearTrail();
+    const q = payload.q;
+    const dtMs = Math.max(payload.dt * 1000 / playbackSpeed, 5);
+    const useFrames = Array.isArray(payload.frames) && payload.frames.length === q.length;
+    let k = 0;
+    $('progress').textContent =
+      `${label}: 共 ${payload.n_frames} 帧, 时长 ${payload.duration.toFixed(2)} s`;
+    playbackTimer = setInterval(() => {
+      if (token !== playToken) { resolve('stopped'); return; }
+      if (k >= q.length) {
+        stopPlayback();
+        $('progress').textContent = `${label}: 完成`;
+        resolve('done');
+        return;
+      }
+      currentQ = q[k];
+      if (useFrames) updateArm(payload.frames[k]);
+      else updateArmFromFK(q[k]);
+      syncSliders();
+      $('progress').textContent =
+        `${label}: ${k + 1}/${q.length}  (t=${(k * payload.dt).toFixed(2)}s)`;
+      k++;
+    }, dtMs);
+  });
+}
+
+// 无 frames 时的回退：请求该帧 FK
+async function updateArmFromFK(q) {
+  try {
+    const j = await api('/api/fk?j=' + q.map((v) => v.toFixed(2)).join(','));
+    updateArm(j.joints, j.pose.rpy_deg);
+  } catch (e) { /* 忽略单帧失败 */ }
+}
+
+// ---------------- 随机点动 ----------------
+function updateRandomBtn() {
+  const b = $('btn-random');
+  b.textContent = randomOn ? '随机点动：开' : '随机点动：关';
+  b.classList.toggle('on', randomOn);
+}
+
+async function randomLoop() {
+  setMode('随机点动');
+  while (randomOn) {
+    try {
+      const rt = await api('/api/random_target', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current: currentQ }),
+      });
+      if (rt.error) { status(rt.error); break; }
+      const j = await api('/api/trajectory', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: currentQ, to: rt.q, profile: 'scurve',
+                               dt: 0.02, with_fk: true }),
+      });
+      const r = await playTrajectoryAsync(j, '随机点动');
+      if (r === 'stopped' || !randomOn) break;
+      await new Promise((res) => { holdTimer = setTimeout(res, 1000); });
+      holdTimer = null;
+    } catch (e) { status(e.message); break; }
+  }
+  randomOn = false;
+  updateRandomBtn();
+  stopPlayback();
+  setMode('手动');
+}
+
+$('btn-random').addEventListener('click', () => {
+  randomOn = !randomOn;
+  updateRandomBtn();
+  if (randomOn) { status(''); randomLoop(); }
+  else {
+    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+    stopPlayback();
+    setMode('手动');
+    status('随机点动已停止');
+  }
+});
+
+// ---------------- 急停 ----------------
+$('btn-stop').addEventListener('click', () => {
+  enterManual();
+  $('progress').textContent = '';
+  status('已急停');
+});
+
+// ---------------- 速度倍率 / 拖尾开关 ----------------
+$('speed').addEventListener('input', (e) => {
+  playbackSpeed = parseInt(e.target.value, 10) / 100.0;
+  $('speed-val').textContent = e.target.value + '%';
+});
+$('chk-trail').addEventListener('change', (e) => {
+  trailOn = e.target.checked;
+  if (!trailOn) clearTrail();
+});
+
+// ---------------- 回零位 / IK / 轨迹按钮 ----------------
+$('btn-home').addEventListener('click', () => {
+  enterManual();
+  currentQ = [0, 0, 90, 0, 0, 0];
+  clearTrail();
+  refreshFK();
+});
+
+$('btn-ik').addEventListener('click', async () => {
+  enterManual();
+  try {
+    const body = {
+      position: [parseFloat($('ik-x').value), parseFloat($('ik-y').value),
+                 parseFloat($('ik-z').value)],
+      initial: currentQ,
+    };
+    if ($('ik-r').value !== '' && $('ik-p').value !== '' && $('ik-yaw').value !== '') {
+      body.orientation = [parseFloat($('ik-r').value), parseFloat($('ik-p').value),
+                          parseFloat($('ik-yaw').value)];
+    }
+    const j = await api('/api/ik', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!j.success) { status('IK 失败：目标可能不可达'); return; }
+    status(`IK 成功 (位置误差 ${j.pos_err.toExponential(1)} m)`);
+    runPointToPoint(j.q, 'scurve', 'IK 执行');
+  } catch (e) { status(e.message); }
+});
+
+function targetQ() {
+  return [0, 1, 2, 3, 4, 5].map((i) => parseFloat($('tg-' + i).value));
+}
+
+async function runPointToPoint(to, profile, label) {
+  try {
+    const j = await api('/api/trajectory', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: currentQ, to, profile, dt: 0.02, with_fk: true }),
+    });
+    setMode('轨迹回放');
+    await playTrajectoryAsync(j, label || ('点到点 ' + profile));
+    setMode('手动');
+  } catch (e) { status(e.message); setMode('手动'); }
+}
+
+$('btn-trap').addEventListener('click', () => runPointToPoint(targetQ(), 'trapezoid'));
+$('btn-scurve').addEventListener('click', () => runPointToPoint(targetQ(), 'scurve'));
+
+$('btn-circle').addEventListener('click', async () => {
+  enterManual();
+  try {
+    const plane = $('circle-plane').value;
+    const j = await api('/api/demo/circle', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ center: [0.15, 0, 0.12], radius: 0.06,
+                             orientation: [180, 0, 0], points: 61,
+                             with_fk: true, initial: currentQ, plane }),
+    });
+    setMode('轨迹回放');
+    await playTrajectoryAsync(j, '圆形轨迹');
+    setMode('手动');
+  } catch (e) { status(e.message); setMode('手动'); }
+});
+
+// ---------------- 启动 ----------------
+(async function init() {
+  try {
+    const lim = await api('/api/limits');
+    limits = lim.limits;
+    buildSliders();
+    resize();
+    await refreshFK();
+  } catch (e) {
+    status(e.message);
+  }
+})();
+</script>
+</body>
+</html>
