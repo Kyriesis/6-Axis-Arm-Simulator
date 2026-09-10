@@ -59,6 +59,20 @@ python web_server.py
 `python web_server.py` 启动本地服务（默认 127.0.0.1:8000），自动打开浏览器。
 three.js 通过 CDN 加载，需联网。Python 运动学模型是唯一真源，前端只做显示与交互。
 
+## 纯前端部署（GitHub Pages）
+
+`docs/` 目录是完整可独立运行的静态站点：前端优先连接本地后端，
+检测不到时自动切换 **Pyodide**（浏览器内 WASM 运行的 CPython + numpy），
+直接加载 `docs/py/` 下的原版运动学模块，功能与本地版完全一致，
+零移植、零误差。首次加载需下载 Pyodide 运行时（约 15 MB，之后浏览器缓存）。
+
+部署步骤：仓库 Settings → Pages → Source 选 "Deploy from a branch" →
+分支 `main`、目录 `/docs`，保存后约 1 分钟可通过
+`https://kyriesis.github.io/6-Axis-Arm-Simulator/` 访问。
+
+注意：`docs/py/py_api.py` 与 `web_server.py` 的 payload 函数是同一套逻辑的
+两份拷贝，修改业务逻辑时需同步两处。
+
 功能：6 轴滑块拖动（实时 FK 刷新 3D）、每轴 ± 点动（按住连续步进 0.5°）、
 末端位姿实时显示、IK 目标位姿求解并执行、点到点梯形/S 曲线轨迹、
 圆形末端轨迹演示（水平/竖直，离线 IK 连续解链 + Catmull-Rom 平滑，
