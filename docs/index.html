@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>虚拟六轴机械臂 - 网页控制（纯前端版）</title>
-<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script src="pyodide/pyodide.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: "Microsoft YaHei", sans-serif; background: #1e2126; color: #ddd; }
@@ -196,15 +196,21 @@ async function apiPyodide(path, opts) {
 
 async function initPyodide() {
   status('未检测到本地服务，正在加载 Pyodide（浏览器内置 Python，首次约 10-20 秒）…');
-  pyodide = await loadPyodide({
-    indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/' });
+  pyodide = await loadPyodide({ indexURL: 'pyodide/' });
   status('Pyodide 加载完成，正在装载运动学模块…');
   await pyodide.loadPackage('numpy', {
     messageCallback: (m) => status('Pyodide：' + m + '…'),
   });
+  // 把模块写入 Pyodide 虚拟文件系统再 import
+  //（runPython 直执行文本无法支撑 py 文件间的 import 关系）
   for (const f of ['arm_model.py', 'ik_solver.py', 'trajectory.py', 'py_api.py']) {
-    pyodide.runPython(await (await fetch('py/' + f)).text());
+    const src = await (await fetch('py/' + f)).text();
+    pyodide.FS.writeFile('/home/pyodide/' + f, src);
   }
+  pyodide.runPython(
+    'import py_api\n'
+    + 'from py_api import (limits_json, fk_json, ik_json, trajectory_json,\n'
+    + '                    circle_json, random_json)\n');
   return 'pyodide';
 }
 
@@ -715,7 +721,8 @@ $('btn-circle').addEventListener('click', async () => {
     // 优先本地后端；不可用则切到 Pyodide 纯前端模式
     try {
       const r = await fetch('/api/limits');
-      if (!r.ok) throw new Error('no local server');
+      const ct = r.headers.get('content-type') || '';
+      if (!r.ok || !ct.includes('json')) throw new Error('no local server');
       backend = 'local';
     } catch (e) {
       backend = await initPyodide();
